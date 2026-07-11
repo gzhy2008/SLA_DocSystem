@@ -46,7 +46,7 @@
                 <!-- 未登录（匿名）菜单 -->
                 {% if not current_user.is_authenticated %}
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('auth.index') }}">首页</a></li>
-                <li class="nav-item"><a class="nav-link" href="#">通知公告（建设中）</a></li>
+                <li class="nav-item"><a class="nav-link" href="#">通知公告</a></li>
                 <!-- 学生菜单 -->
                 {% elif current_user.role == 'student' %}
                 <li class="nav-item"><a class="nav-link" href="{{ url_for('student.student_dashboard') }}">我的控制台</a></li>
