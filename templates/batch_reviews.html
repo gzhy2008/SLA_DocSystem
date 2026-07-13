@@ -171,7 +171,7 @@
 <div class="d-flex align-items-center mt-3 gap-3">
     <a href="{{ url_for('admin.manage_batches') }}" class="btn btn-secondary">← 返回批次管理</a>
     {% if current_user.role in ['admin', 'super_admin'] and current_status == 'approved' and students %}
-    <button type="button" class="btn btn-purple" onclick="exportSelected()">
+    <button type="button" class="btn btn-purple" onclick="openExportModal()">
         📦 导出选中资料 (<span id="exportCount">{{ students|length }}</span>)
     </button>
     {% endif %}
@@ -180,6 +180,7 @@
 
 {% if current_user.role in ['admin', 'super_admin'] and current_status == 'approved' and students %}
 <form id="exportForm" method="post" action="{{ url_for('admin.export_batch', batch=batch.batch_name) }}" style="display:none;">
+    <input type="hidden" name="export_code" id="exportCodeField">
     {% for s in students %}
     <input type="hidden" name="student_ids" value="{{ s.id }}" data-export-id="{{ s.id }}">
     {% endfor %}
@@ -415,4 +416,46 @@ if (compareModal) {
 }
 </script>
 {% endif %}
+
+<!-- 导出验证码模态框 -->
+<div class="modal fade" id="exportCodeModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">导出验证</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <p class="small text-muted">你即将导出选中学生的资料。验证码将发送到您的绑定邮箱。</p>
+        <div class="mb-3"><button type="button" id="modalSendCodeBtn" class="btn btn-outline-primary w-100" onclick="modalSendCode()">发送验证码</button></div>
+        <div class="mb-3"><input type="text" id="modalCodeInput" class="form-control" placeholder="输入6位验证码" maxlength="6"></div>
+        <div id="modalCodeMsg" class="small mb-3"></div>
+        <button type="button" id="modalConfirmBtn" class="btn btn-primary w-100" onclick="modalConfirmExport()">确认导出</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function openExportModal() {
+    document.getElementById('modalCodeInput').value = '';
+    document.getElementById('modalCodeMsg').innerHTML = '';
+    new bootstrap.Modal(document.getElementById('exportCodeModal')).show();
+}
+function modalSendCode() {
+    var btn = document.getElementById('modalSendCodeBtn');
+    btn.disabled = true; btn.innerText = '发送中...';
+    fetch('/admin/export/send_code', {method:'POST', headers:{'X-CSRFToken':'{{ csrf_token }}'}})
+    .then(r => r.json()).then(d => {
+        document.getElementById('modalCodeMsg').innerHTML = d.status==='ok'
+            ? '<span class="text-success">' + d.msg + '</span>'
+            : '<span class="text-danger">' + d.msg + '</span>';
+        btn.disabled = false; btn.innerText = '发送验证码';
+    });
+}
+function modalConfirmExport() {
+    var code = document.getElementById('modalCodeInput').value;
+    if (!code) { alert('请输入验证码'); return; }
+    document.getElementById('exportCodeField').value = code;
+    bootstrap.Modal.getInstance(document.getElementById('exportCodeModal')).hide();
+    exportSelected();
+}
+</script>
 {% endblock %}

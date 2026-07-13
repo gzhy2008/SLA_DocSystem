@@ -1592,25 +1592,30 @@ def export_page():
 def export_batch(batch):
     batch_obj = ExamBatch.query.filter_by(batch_name=batch).first()
     if not batch_obj:
-        flash(f'批次 {batch} 不存在，将前往批次管理页面查看可用批次。', 'danger')
+        flash(f'批次 {batch} 不存在', 'danger')
         return redirect(url_for('admin.manage_batches'))
     if batch_obj.is_locked:
         flash(f'批次 {batch} 已被锁定，无法导出', 'warning')
-        return redirect(url_for('admin.batch_reviews', batch_name=batch_obj.batch_name, status='approved'))
+        return redirect(url_for('admin.batch_reviews', batch_name=batch))
 
-    # 支持选择性导出：前端传入 student_ids，否则导出全部已通过
+    code = request.form.get('export_code', '').strip()
+    saved = session.get('export_verify_code')
+    if not saved or code != saved:
+        flash('验证码错误，请重新获取', 'danger')
+        return redirect(url_for('admin.batch_reviews', batch_name=batch))
+    if time.time() - session.get('export_verify_code_time', 0) > 300:
+        flash('验证码已过期，请重新获取', 'danger')
+        return redirect(url_for('admin.batch_reviews', batch_name=batch))
+    session.pop('export_verify_code', None)
+    session.pop('export_verify_code_time', None)
+
     selected_ids = request.form.getlist('student_ids')
     if selected_ids:
-        students = Student.query.filter(
-            Student.id.in_(selected_ids),
-            Student.batch_id == batch_obj.id,
-            Student.status == 'approved'
-        ).all()
+        students = Student.query.filter(Student.id.in_(selected_ids), Student.batch_id == batch_obj.id, Student.status == 'approved').all()
     else:
         students = Student.query.filter_by(batch_id=batch_obj.id, status='approved').all()
-
     if not students:
-        flash(f'没有可导出的已通过学生', 'warning')
+        flash('没有可导出的已通过学生', 'warning')
         return redirect(url_for('admin.batch_reviews', batch_name=batch_obj.batch_name, status='approved'))
 
     tmpdir = tempfile.mkdtemp()
@@ -1620,40 +1625,44 @@ def export_batch(batch):
             os.makedirs(stu_dir, exist_ok=True)
             profile = s.user.profile
             if profile:
-                if profile.photo_path:
-                    src = os.path.join(current_app.config['UPLOAD_FOLDER'], profile.photo_path)
-                    if os.path.exists(src):
-                        ext = os.path.splitext(profile.photo_path)[1]
-                        shutil.copy2(src, os.path.join(stu_dir, f"{s.id_number}{ext}"))
-                if profile.edu_cert_path:
-                    src = os.path.join(current_app.config['UPLOAD_FOLDER'], profile.edu_cert_path)
-                    if os.path.exists(src):
-                        ext = os.path.splitext(profile.edu_cert_path)[1]
-                        shutil.copy2(src, os.path.join(stu_dir, f"{s.id_number}-edu{ext}"))
-                if profile.id_card_front_path:
-                    src = os.path.join(current_app.config['UPLOAD_FOLDER'], profile.id_card_front_path)
-                    if os.path.exists(src):
-                        ext = os.path.splitext(profile.id_card_front_path)[1]
-                        shutil.copy2(src, os.path.join(stu_dir, f"身份证正面{ext}"))
-                if profile.id_card_back_path:
-                    src = os.path.join(current_app.config['UPLOAD_FOLDER'], profile.id_card_back_path)
-                    if os.path.exists(src):
-                        ext = os.path.splitext(profile.id_card_back_path)[1]
-                        shutil.copy2(src, os.path.join(stu_dir, f"身份证反面{ext}"))
+                for field, suffix in [('photo_path',''),('edu_cert_path','-edu'),('id_card_front_path','ID-F'),('id_card_back_path','ID-B')]:
+                    path = getattr(profile, field, None)
+                    if path:
+                        src = os.path.join(current_app.config['UPLOAD_FOLDER'], path)
+                        if os.path.exists(src):
+                            ext = os.path.splitext(path)[1]
+                            shutil.copy2(src, os.path.join(stu_dir, f'{s.id_number}{suffix}{ext}'))
         export_dir = current_app.config.get('EXPORT_FOLDER', os.path.join(os.path.dirname(current_app.config['UPLOAD_FOLDER']), 'exports'))
         os.makedirs(export_dir, exist_ok=True)
         ts = datetime.now().strftime('%Y%m%d%H%M')
-        zip_filename = f"{batch_obj.batch_name}_{batch_obj.skill.name}_{batch_obj.skill_level}_{ts}.zip"
-        zip_base = os.path.join(export_dir, zip_filename.rsplit('.', 1)[0])
-        shutil.make_archive(zip_base, 'zip', tmpdir)
-        zip_path = f"{zip_base}.zip"
+        zip_filename = f'{batch_obj.batch_name}_{batch_obj.skill.name}_{batch_obj.skill_level}_{ts}.zip'
+        zip_path = os.path.join(export_dir, zip_filename)
+        shutil.make_archive(zip_path.rsplit('.',1)[0], 'zip', tmpdir)
+        zip_path = zip_path.rsplit('.',1)[0] + '.zip'
         return send_file(zip_path, as_attachment=True, download_name=zip_filename)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+@admin_bp.route('/admin/export/send_code', methods=['POST'])
+@login_required
+@role_required('admin', 'super_admin')
+def send_export_code():
+    if not current_user.email or '@' not in current_user.email:
+        return jsonify({'status':'error','msg':'未配置邮箱，无法发送验证码'})
+    try:
+        code = ''.join(random.choices(string.digits, k=6))
+        msg = Message('技能认定资料收集系统 - 导出验证码', recipients=[current_user.email],
+                      body=f'导出文件验证码: {code}\n有效期 5 分钟。\n\n—— 技能认定资料收集系统')
+        current_app.extensions['mail'].send(msg)
+        session['export_verify_code'] = code
+        session['export_verify_code_time'] = time.time()
+        return jsonify({'status':'ok','msg':f'验证码已发往 {mask_email(current_user.email)}'})
+    except Exception as e:
+        current_app.logger.error(f'导出验证码发送失败: {e}')
+        return jsonify({'status':'error','msg':'邮件发送失败，请检查邮箱配置'})
 
-# ===================== 通知管理（全局管理员入口） =====================
+
 @admin_bp.route('/admin/notices')
 @login_required
 @role_required('admin', 'super_admin')
