@@ -33,7 +33,7 @@ python3 app.py
 
 ```bash
 # 在 .env 中设置
-DATABASE_URL=mysql+pymysql://user:password@localhost:3306/exam_tool?charset=utf8mb4
+DATABASE_URL=mysql+pymysql://user:password@localhost:3306/sledy?charset=utf8mb4
 FLASK_ENV=production
 
 # 执行数据库迁移
